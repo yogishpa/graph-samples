@@ -1,19 +1,15 @@
-# SageMaker Notebook Scheduler
+# Neptune Workbench Scheduler
 
-CloudFormation template to automatically start and stop a SageMaker notebook instance on a defined schedule.
+Automatically start and stop an Amazon Neptune workbench (SageMaker notebook) on a defined schedule to optimize costs.
 
 ## Schedule
 
 - **Weekdays**: Runs from 9 AM to 7 PM IST (3:30 AM to 1:30 PM UTC)
 - **Weekends**: Stopped (Friday 7 PM to Monday 9 AM)
 
-## Resources Created
+## Deployment Options
 
-- Lambda functions for starting and stopping the notebook
-- EventBridge rules for scheduling
-- IAM role with required permissions
-
-## Deployment
+### CloudFormation
 
 1. Log in to AWS Console
 2. Navigate to CloudFormation
@@ -21,6 +17,20 @@ CloudFormation template to automatically start and stop a SageMaker notebook ins
 4. Upload `sagemaker-notebook-scheduler.yaml`
 5. Enter stack name and review parameters
 6. Create stack
+
+### Terraform
+
+1. Install Terraform
+2. Create Lambda deployment package:
+   ```bash
+   zip lambda_function.zip lambda_function.py
+   ```
+3. Run Terraform commands:
+   ```bash
+   terraform init
+   terraform plan
+   terraform apply
+   ```
 
 ## Parameters
 
