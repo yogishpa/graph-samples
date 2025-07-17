@@ -4,7 +4,7 @@ Description: 'CloudFormation template to schedule stopping and starting of a Sag
 Parameters:
   NotebookInstanceName:
     Type: String
-    Default: aws-neptune-sample-ng
+    Default: REPLACE WITH YOUR NEPTUNE WORKBENCH NAME
     Description: Name of the SageMaker notebook instance to manage
   
   StopScheduleExpression:
