@@ -1,0 +1,227 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to schedule stopping and starting of a SageMaker notebook instance'
+
+Parameters:
+  NotebookInstanceName:
+    Type: String
+    Default: aws-neptune-sample-ng
+    Description: Name of the SageMaker notebook instance to manage
+  
+  StopScheduleExpression:
+    Type: String
+    Default: cron(30 13 ? * MON-FRI *)
+    Description: Schedule expression for when to stop the notebook (7:00 PM IST / 1:30 PM UTC, Monday-Friday)
+    
+  StartScheduleExpression:
+    Type: String
+    Default: cron(30 3 ? * MON-FRI *)
+    Description: Schedule expression for when to start the notebook (9:00 AM IST / 3:30 AM UTC, Monday-Friday)
+
+Resources:
+  # IAM Role for Lambda function
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SageMakerManageNotebookPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sagemaker:StopNotebookInstance
+                  - sagemaker:StartNotebookInstance
+                  - sagemaker:DescribeNotebookInstance
+                Resource: !Sub 'arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:notebook-instance/${NotebookInstanceName}'
+
+  # Lambda function to stop the SageMaker notebook
+  StopNotebookFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.9
+      Timeout: 30
+      Environment:
+        Variables:
+          NOTEBOOK_NAME: !Ref NotebookInstanceName
+          ACTION: "stop"
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+              notebook_name = os.environ['NOTEBOOK_NAME']
+              action = os.environ['ACTION']
+              
+              sagemaker = boto3.client('sagemaker')
+              
+              try:
+                  # Check the current state of the notebook instance
+                  response = sagemaker.describe_notebook_instance(
+                      NotebookInstanceName=notebook_name
+                  )
+                  
+                  current_status = response['NotebookInstanceStatus']
+                  logger.info(f"Current status of notebook {notebook_name}: {current_status}")
+                  
+                  if action == "stop":
+                      # Only stop if the notebook is in 'InService' state
+                      if current_status == 'InService':
+                          logger.info(f"Stopping notebook instance: {notebook_name}")
+                          sagemaker.stop_notebook_instance(
+                              NotebookInstanceName=notebook_name
+                          )
+                          return {
+                              'statusCode': 200,
+                              'body': f"Successfully initiated stop for notebook instance {notebook_name}"
+                          }
+                      else:
+                          logger.info(f"Notebook {notebook_name} is not in 'InService' state, current state: {current_status}")
+                          return {
+                              'statusCode': 200,
+                              'body': f"Notebook instance {notebook_name} is already in {current_status} state, no action taken"
+                          }
+                  
+              except Exception as e:
+                  logger.error(f"Error stopping notebook instance {notebook_name}: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'body': f"Error stopping notebook instance: {str(e)}"
+                  }
+
+  # Lambda function to start the SageMaker notebook
+  StartNotebookFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.9
+      Timeout: 30
+      Environment:
+        Variables:
+          NOTEBOOK_NAME: !Ref NotebookInstanceName
+          ACTION: "start"
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+              notebook_name = os.environ['NOTEBOOK_NAME']
+              action = os.environ['ACTION']
+              
+              sagemaker = boto3.client('sagemaker')
+              
+              try:
+                  # Check the current state of the notebook instance
+                  response = sagemaker.describe_notebook_instance(
+                      NotebookInstanceName=notebook_name
+                  )
+                  
+                  current_status = response['NotebookInstanceStatus']
+                  logger.info(f"Current status of notebook {notebook_name}: {current_status}")
+                  
+                  if action == "start":
+                      # Only start if the notebook is in 'Stopped' state
+                      if current_status == 'Stopped':
+                          logger.info(f"Starting notebook instance: {notebook_name}")
+                          sagemaker.start_notebook_instance(
+                              NotebookInstanceName=notebook_name
+                          )
+                          return {
+                              'statusCode': 200,
+                              'body': f"Successfully initiated start for notebook instance {notebook_name}"
+                          }
+                      else:
+                          logger.info(f"Notebook {notebook_name} is not in 'Stopped' state, current state: {current_status}")
+                          return {
+                              'statusCode': 200,
+                              'body': f"Notebook instance {notebook_name} is already in {current_status} state, no action taken"
+                          }
+                  
+              except Exception as e:
+                  logger.error(f"Error starting notebook instance {notebook_name}: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'body': f"Error starting notebook instance: {str(e)}"
+                  }
+
+  # EventBridge rule to trigger the stop Lambda function (Mon-Fri)
+  StopScheduledRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Rule to stop SageMaker notebook instance at 7 PM IST (Mon-Fri)"
+      ScheduleExpression: !Ref StopScheduleExpression
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt StopNotebookFunction.Arn
+          Id: "StopNotebookTarget"
+
+  # EventBridge rule to trigger the start Lambda function (Mon-Fri)
+  StartScheduledRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Rule to start SageMaker notebook instance at 9 AM IST (Mon-Fri)"
+      ScheduleExpression: !Ref StartScheduleExpression
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt StartNotebookFunction.Arn
+          Id: "StartNotebookTarget"
+
+  # Permission for EventBridge to invoke Stop Lambda
+  PermissionForEventsToInvokeStopLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref StopNotebookFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt StopScheduledRule.Arn
+      
+  # Permission for EventBridge to invoke Start Lambda
+  PermissionForEventsToInvokeStartLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref StartNotebookFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt StartScheduledRule.Arn
+
+Outputs:
+  StopLambdaFunction:
+    Description: "Lambda function that stops the SageMaker notebook"
+    Value: !Ref StopNotebookFunction
+    
+  StartLambdaFunction:
+    Description: "Lambda function that starts the SageMaker notebook"
+    Value: !Ref StartNotebookFunction
+  
+  StopScheduleRule:
+    Description: "EventBridge rule that stops notebook at 7 PM IST (Mon-Fri)"
+    Value: !Ref StopScheduledRule
+    
+  StartScheduleRule:
+    Description: "EventBridge rule that starts notebook at 9 AM IST (Mon-Fri)"
+    Value: !Ref StartScheduledRule
+  
+  NotebookName:
+    Description: "Name of the SageMaker notebook being managed"
+    Value: !Ref NotebookInstanceName
